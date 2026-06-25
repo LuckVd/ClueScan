@@ -77,9 +77,18 @@ def _to_finding(raw: dict, source: str, source_tool: str, fallback_loc: CodeLoca
     )
 
 
+class AnalysisUnavailableError(RuntimeError):
+    """Raised when a region could not actually be analyzed (e.g. LLM down) —
+    distinct from 'analyzed and found nothing', so it is counted as a region
+    error instead of a silent false-clean."""
+
+
 async def _run_analyzer(llm: LLMClient, system: str, user: str, source: str,
                          source_tool: str, fallback_loc: CodeLocation,
-                         require_logic_evidence: bool) -> list[Finding]:
+                         require_logic_evidence: bool) -> tuple[list[Finding], bool]:
+    """Returns (findings, llm_failed). llm_failed=True means the LLM call itself
+    broke (timeout/error/unparseable) — the caller treats all-failed as a region
+    error rather than a clean result."""
     try:
         resp = await llm.complete(
             [{"role": "system", "content": system}, {"role": "user", "content": user}],
@@ -87,14 +96,14 @@ async def _run_analyzer(llm: LLMClient, system: str, user: str, source: str,
             temperature=0.0,
         )
     except LLMError:
-        return []
+        return [], True
     try:
         data = await extract_json(resp.content)
     except LLMError:
-        return []
+        return [], True
     raw_findings = data.get("findings") if isinstance(data, dict) else None
     if not isinstance(raw_findings, list):
-        return []
+        return [], True
 
     out: list[Finding] = []
     for raw in raw_findings:
@@ -106,7 +115,7 @@ async def _run_analyzer(llm: LLMClient, system: str, user: str, source: str,
         f = _to_finding(raw, source, source_tool, fallback_loc)
         if f:
             out.append(f)
-    return out
+    return out, False
 
 
 async def analyze_region(
@@ -128,16 +137,28 @@ async def analyze_region(
     digest = exploration.digest()
 
     findings: list[Finding] = []
+    attempts = 0
+    llm_failures = 0
     if enable_security:
-        sys_p, usr_p = security_prompts(digest)
-        findings += await _run_analyzer(
-            llm, sys_p, usr_p, "security", source_tool, fallback_loc, require_logic_evidence=False
+        attempts += 1
+        f, failed = await _run_analyzer(
+            llm, *security_prompts(digest), "security", source_tool, fallback_loc,
+            require_logic_evidence=False,
         )
+        llm_failures += failed
+        findings += f
     if enable_logic:
-        sys_p, usr_p = logic_prompts(digest)
-        findings += await _run_analyzer(
-            llm, sys_p, usr_p, "logic", source_tool, fallback_loc, require_logic_evidence=True
+        attempts += 1
+        f, failed = await _run_analyzer(
+            llm, *logic_prompts(digest), "logic", source_tool, fallback_loc, require_logic_evidence=True,
         )
+        llm_failures += failed
+        findings += f
+
+    # If every analyzer's LLM call failed, the region was NOT actually analyzed —
+    # raise so it's counted as a region error instead of a false 'clean'.
+    if attempts and llm_failures == attempts:
+        raise AnalysisUnavailableError("LLM analysis failed for this region")
 
     # anti-hallucination + severity gate
     verified: list[Finding] = []

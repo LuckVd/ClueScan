@@ -190,15 +190,25 @@ class ReviewResult(BaseModel):
     merged_issues: int = 0
     auto_closed: int = 0
     skipped_duplicate: bool = False
+    region_errors: int = 0
     duration_seconds: float = 0.0
     center_url: str | None = None
     error: str | None = None
 
     def summary(self, max_items: int = 5) -> str:
-        """Concise, low-context summary returned to the calling agent."""
+        """Concise, low-context summary returned to the calling agent.
+
+        Never reports a silent 'clean' when regions failed analysis — that would
+        mask LLM timeouts as false negatives."""
         if self.error:
             return f"ClueScan review failed: {self.error}"
         if not self.findings:
+            if self.region_errors:
+                return (
+                    f"ClueScan: review INCOMPLETE — {self.region_errors} region(s) failed "
+                    f"analysis (e.g. LLM timeout/error). No issues confirmed; please re-run. "
+                    f"(reviewed {self.files_reviewed} file(s))"
+                )
             return (
                 f"ClueScan: clean. Reviewed {self.files_reviewed} changed file(s); "
                 f"no security/business-logic issues found."
@@ -215,6 +225,11 @@ class ReviewResult(BaseModel):
             lines.append(f"  - [{f.severity.value.upper()}] {f.title} @ {f.location.display()}")
         if self.auto_closed:
             lines.append(f"  ({self.auto_closed} previously-open issue(s) auto-closed as fixed)")
+        if self.region_errors:
+            lines.append(
+                f"  WARNING: {self.region_errors} region(s) failed analysis (e.g. LLM timeout) — "
+                f"results may be incomplete; re-run to be sure."
+            )
         if self.center_url:
             lines.append(f"Full details: {self.center_url}")
         return "\n".join(lines)

@@ -14,8 +14,8 @@ llm:
   concurrency: 3
   max_tokens: 16384
   temperature: 0.1
-  timeout: 120
-  max_retries: 5
+  timeout: 60        # per LLM request; a hard per-region cap is set below
+  max_retries: 2     # kept small so an interactive review can't hang for many minutes
 
 triggers:
   debounce_ms: 2500
@@ -27,6 +27,7 @@ analysis:
   enable_security: true
   enable_logic_vuln: true
   min_severity: low
+  region_timeout_seconds: 90   # hard cap per changed region; bounds total review time
   languages: [python, javascript, java, go]
 
 dedup:

@@ -25,8 +25,8 @@ class LLMConfig(BaseModel):
     concurrency: int = Field(3, ge=1, le=32)
     max_tokens: int = 16384
     temperature: float = 0.1
-    timeout: int = 120
-    max_retries: int = 5
+    timeout: int = 60
+    max_retries: int = 2
 
 
 class TriggersConfig(BaseModel):
@@ -40,6 +40,7 @@ class AnalysisConfig(BaseModel):
     enable_security: bool = True
     enable_logic_vuln: bool = True
     min_severity: str = "low"
+    region_timeout_seconds: int = 90  # hard cap per changed region; prevents LLM hangs
     languages: list[str] = Field(
         default_factory=lambda: ["python", "javascript", "java", "go"]
     )

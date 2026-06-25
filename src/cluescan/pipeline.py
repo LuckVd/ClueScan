@@ -69,27 +69,25 @@ def _finding_to_payload(f: Finding, repo: str, project: str, review_id: str) -> 
 
 async def _process_region(region, parser: CodeParser, repo: Path, llm: LLMClient, cfg: Config,
                           source_tool: str) -> list[Finding]:
+    """Explore + analyze one region. Raises on LLM/analysis failure (callers wrap
+    with a per-region timeout and count it as a region_error — never swallowed
+    into a silent 'clean')."""
+    from cluescan.analysis import AnalysisUnavailableError
     min_sev = parse_severity(cfg.analysis.min_severity)
-    try:
-        exploration = await Explorer(
-            parser, repo, llm,
-            max_steps=cfg.analysis.explorer_max_steps,
-            char_budget=cfg.analysis.context_token_budget * 4,
-        ).explore(region)
-        return await analyze_region(
-            exploration, llm, repo,
-            enable_security=cfg.analysis.enable_security,
-            enable_logic=cfg.analysis.enable_logic_vuln,
-            min_severity=min_sev,
-            source_tool=source_tool,
-        )
-    except Exception as e:  # one bad region must not abort the whole review
-        return _fallback_region_findings(region, e)
-
-
-def _fallback_region_findings(region, err) -> list[Finding]:
-    # Keep the review resilient: log via finding-free result; the region is skipped.
-    return []
+    exploration = await Explorer(
+        parser, repo, llm,
+        max_steps=cfg.analysis.explorer_max_steps,
+        char_budget=cfg.analysis.context_token_budget * 4,
+    ).explore(region)
+    if exploration.error:
+        raise AnalysisUnavailableError(f"exploration failed: {exploration.error}")
+    return await analyze_region(
+        exploration, llm, repo,
+        enable_security=cfg.analysis.enable_security,
+        enable_logic=cfg.analysis.enable_logic_vuln,
+        min_severity=min_sev,
+        source_tool=source_tool,
+    )
 
 
 async def run_review(
@@ -163,12 +161,28 @@ async def run_review(
             await _finalize(store, repo, result, diff, started)
             return result
         sem = asyncio.Semaphore(max(1, cfg.llm.concurrency))
+        region_timeout = max(1, cfg.analysis.region_timeout_seconds)
+        region_errors = 0
 
         async def guarded(region):
+            nonlocal region_errors
             async with sem:
-                return await _process_region(region, CodeParser(), repo, llm, cfg, source_tool)
+                try:
+                    return await asyncio.wait_for(
+                        _process_region(region, CodeParser(), repo, llm, cfg, source_tool),
+                        timeout=region_timeout,
+                    )
+                except asyncio.TimeoutError:
+                    region_errors += 1
+                    return []
+                except Exception:
+                    # one bad region must not abort the whole review, but it IS
+                    # counted (never silently turned into a false 'clean').
+                    region_errors += 1
+                    return []
 
         per_region = await asyncio.gather(*[guarded(r) for r in regions])
+        result.region_errors = region_errors
         raw_findings: list[Finding] = [f for group in per_region for f in group]
 
         # semantic hash + within-review dedup (keep highest severity/confidence)
