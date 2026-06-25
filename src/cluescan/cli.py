@@ -69,10 +69,12 @@ def serve_web(config_path: str | None) -> None:
 
 @main.command("review")
 @click.option("--repo", "repo", default=".", help="Repository path to review.")
-@click.option("--base", "base_ref", default=None, help="Base git ref (default: stored baseline).")
-@click.option("--head", "head_ref", default="HEAD", show_default=True)
+@click.option("--base", "base_ref", default=None, help="Base git ref (default: stored baseline, else HEAD).")
+@click.option("--head", "head_ref", default=None,
+              help="Head git ref (default: working tree — reviews uncommitted changes; "
+                   "pass e.g. HEAD to review committed changes up to a ref).")
 @click.option("--config", "config_path", default=None, help="Path to cluescan.yaml")
-def review(repo: str, base_ref: str | None, head_ref: str, config_path: str | None) -> None:
+def review(repo: str, base_ref: str | None, head_ref: str | None, config_path: str | None) -> None:
     """Run a single review over a repo's diff and print the summary."""
     import asyncio
     from cluescan.pipeline import run_review
