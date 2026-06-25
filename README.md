@@ -64,6 +64,16 @@ call the `review_diff` tool directly.
 | `update_issue_status` | change an issue's status |
 | `submit_finding` | submit a finding you noticed (cross-tool aggregation) |
 
+## Triggering reviews
+
+ClueScan triggers at **feature completion** (the agent judges it), not on every
+edit and not at commit. In Claude Code, the `/security-review` skill decides a
+feature is done and calls `review_diff`. Other tools (Cursor/Codex/Zed) use the
+equivalent rule — see [`docs/agent-rules.md`](docs/agent-rules.md). The
+`review_diff` call is **debounced server-side**: bursts collapse into one scan
+and every caller gets the same summary, so no client-side timing is needed.
+Findings from any tool aggregate in the Review Center (deduped by semantic hash).
+
 ## Configuration
 
 See `cluescan.yaml.example`. Any value supports `${ENV}` interpolation and

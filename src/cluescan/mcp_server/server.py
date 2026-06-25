@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
@@ -39,6 +40,8 @@ class _Ctx:
         self.repo = repo
         self._llm: LLMClient | None = None
         self._tried_llm = False
+        # per-repo trailing-edge debounce state for review_diff
+        self._debounce: dict[str, dict] = {}
 
     async def llm(self) -> LLMClient:
         if self._llm is None and not self._tried_llm:
@@ -55,6 +58,53 @@ class _Ctx:
             asyncio.get_running_loop().create_task(drain_once(self.cfg))
         except RuntimeError:
             pass
+
+    async def debounced_review(self, repo: str, *, base_ref: str | None = None,
+                               head_ref: str | None = None, force: bool = False,
+                               source_tool: str = "claude_code"):
+        """Trailing-edge debounce: many review_diff calls within `debounce_ms`
+        collapse into ONE review (the latest args win); every caller awaits and
+        receives the same ReviewResult. With debounce_ms <= 0, runs immediately."""
+        from cluescan.models import ReviewResult
+        debounce_s = self.cfg.triggers.debounce_ms / 1000.0
+        if debounce_s <= 0:
+            llm = await self.llm()
+            return await run_review(self.cfg, repo, base_ref=base_ref, head_ref=head_ref,
+                                    source_tool=source_tool, force=force, llm=llm)
+
+        st = self._debounce.setdefault(repo, {"task": None, "waiters": [], "kw": None, "fires": 0.0})
+        kw = {"base_ref": base_ref, "head_ref": head_ref, "force": force, "source_tool": source_tool}
+        now = time.monotonic()
+        if st["task"] is None or st["fires"] <= now:
+            # (re)schedule a trailing-edge review `debounce_s` out
+            st["fires"] = now + debounce_s
+            st["kw"] = kw
+            st["task"] = asyncio.create_task(self._debounce_runner(repo))
+        else:
+            # inside the window: latest args win, join the in-flight review
+            st["kw"] = kw
+        fut = asyncio.get_running_loop().create_future()
+        st["waiters"].append(fut)
+        return await fut
+
+    async def _debounce_runner(self, repo: str):
+        from cluescan.models import ReviewResult
+        st = self._debounce[repo]
+        debounce_s = self.cfg.triggers.debounce_ms / 1000.0
+        try:
+            await asyncio.sleep(debounce_s)
+            kw = st["kw"] or {}
+            llm = await self.llm()
+            result = await run_review(self.cfg, repo, llm=llm, **kw)
+        except Exception as e:
+            result = ReviewResult(review_id="err", repo=repo, base_ref="", head_ref="",
+                                  error=f"debounced review failed: {e}")
+        waiters, st["waiters"] = st.get("waiters", []), []
+        st["task"] = None
+        st["fires"] = 0.0
+        for f in waiters:
+            if not f.done():
+                f.set_result(result)
 
 
 def _resolve_repo(ctx: _Ctx, repo: str | None) -> str:
@@ -75,11 +125,11 @@ def build_mcp(cfg: Config, repo: str) -> FastMCP:
     ) -> str:
         """Run a security review over the repo's git diff (default: uncommitted
         changes since the last review). Returns a short summary; full detail is
-        in the Review Center. Safe to call after finishing a feature."""
-        llm = await ctx.llm()
-        result = await run_review(
-            cfg, _resolve_repo(ctx, repo), base_ref=base_ref, head_ref=head_ref,
-            source_tool="claude_code", force=force, llm=llm,
+        in the Review Center. Call this after finishing a feature. Repeated calls
+        within the debounce window collapse into one scan; pass force=true to
+        bypass dedup and re-review identical content."""
+        result = await ctx.debounced_review(
+            _resolve_repo(ctx, repo), base_ref=base_ref, head_ref=head_ref, force=force,
         )
         ctx.fire_and_forget_drain()
         return result.summary()

@@ -10,26 +10,43 @@ a non-trivial code change. ClueScan drives its own LLM (configured separately) t
 autonomously explore the changed code and its context — it does **not** consume your
 context window. It reports real security / business-logic vulnerabilities, not style.
 
-## When to use
+## Before running — judge whether this is a feature completion
 
-Invoke this skill **proactively** when:
-- you have just finished implementing a feature, fixing a bug, or refactoring code that
-  touches security-relevant areas (auth, input handling, SQL/commands, crypto, file/HTTP,
-  authorization, money/quantities, deserialization), **before** you summarize or hand off;
-- the user asks you to "review", "check security", "scan", or "make sure this is safe".
+Do **not** blindly review on every edit. First decide if you just **completed or added a
+feature / a substantive, self-contained change**. Only then call `review_diff`.
 
-Do **not** use it for pure style/formatting/typo changes or trivial doc edits.
+**Call it when YES:**
+- You finished implementing a feature, endpoint, or user-facing behavior (it compiles/runs,
+  not half-written).
+- You completed a bug fix, a refactor with behavior change, or added/changed logic in
+  security-relevant areas: auth, input parsing, SQL/commands, file/HTTP, crypto, authz,
+  money/quantities, deserialization, secrets.
+- The user explicitly asks to review/check/harden.
+
+**Skip (do NOT call) when:**
+- Only style, formatting, comments, rename, import sort, or doc-only changes.
+- Work-in-progress that doesn't run yet / a partial edit mid-task (wait until the feature is done).
+- You only read/explored code without changing behavior.
+- Nothing changed since the last review (the tool dedups anyway, but don't waste a call).
+
+This judgment is the trigger: a scan runs at the moment a feature is actually completed —
+neither on every keystroke nor delayed until commit.
 
 ## How to run
 
-Call the **`review_diff`** tool provided by the `cluescan` MCP server (no arguments needed
-for the common case — it reviews uncommitted changes since the last review):
+Once you've judged that a feature was completed, call the **`review_diff`** tool from the
+`cluescan` MCP server (no args needed — it reviews uncommitted changes since the last review):
 
 ```
 review_diff()
 ```
 
+The call is **debounced server-side**: if several triggers fire close together (e.g. you call
+it again right away), they collapse into a single scan, so you don't need to worry about
+timing — just call it when a feature is done.
+
 It returns a short summary like:
+
 
 > ClueScan found 2 issue(s) (1 critical, 1 medium).
 >   - [CRITICAL] SQL injection in get_user @ src/app.py:3
