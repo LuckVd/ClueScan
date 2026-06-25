@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ClueScan · AI Code Review Center</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --panel2: #1c232c; --border: #2a313c;
+    --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff; --green: #3fb950;
+    --crit: #f85149; --high: #ff7b72; --med: #d29922; --low: #58a6ff; --info: #8b949e;
+    --ok: #3fb950; --ai: #bc8cff;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.5 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  header { display: flex; align-items: center; gap: 16px; padding: 14px 22px;
+    border-bottom: 1px solid var(--border); background: var(--panel); position: sticky; top: 0; z-index: 5; }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; letter-spacing: .3px; }
+  header h1 .dot { color: var(--accent); }
+  header .spacer { flex: 1; }
+  header input.token { background: var(--panel2); border: 1px solid var(--border); color: var(--text);
+    padding: 6px 10px; border-radius: 6px; width: 220px; font-size: 12px; }
+  main { max-width: 1280px; margin: 0 auto; padding: 20px 22px 60px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px,1fr)); gap: 12px; margin-bottom: 18px; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+  .card .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .5px; }
+  .card .value { font-size: 26px; font-weight: 700; margin-top: 4px; }
+  .sev-grid { display: grid; grid-template-columns: repeat(5,1fr); gap: 8px; }
+  .sev { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 10px; text-align: center; }
+  .sev .n { font-size: 20px; font-weight: 700; }
+  .sev .t { font-size: 11px; color: var(--muted); text-transform: uppercase; }
+  .filters { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin: 18px 0 12px; }
+  select, input.q { background: var(--panel2); border: 1px solid var(--border); color: var(--text);
+    padding: 7px 10px; border-radius: 6px; font-size: 13px; }
+  table { width: 100%; border-collapse: collapse; background: var(--panel);
+    border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  th { font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); }
+  tr:last-child td { border-bottom: none; }
+  tr.row { cursor: pointer; }
+  tr.row:hover { background: var(--panel2); }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+  .sev-critical { background: rgba(248,81,73,.15); color: var(--crit); }
+  .sev-high { background: rgba(255,123,114,.15); color: var(--high); }
+  .sev-medium { background: rgba(210,153,34,.15); color: var(--med); }
+  .sev-low { background: rgba(88,166,255,.15); color: var(--low); }
+  .sev-info { background: rgba(139,148,158,.15); color: var(--info); }
+  .st-open { color: var(--crit); } .st-confirmed { color: var(--med); }
+  .st-fixing { color: var(--low); } .st-fixed { color: var(--green); }
+  .st-wontfix, .st-false_positive { color: var(--muted); }
+  .tools { display: flex; gap: 4px; flex-wrap: wrap; }
+  .tool { background: var(--panel2); border: 1px solid var(--border); border-radius: 4px;
+    padding: 1px 6px; font-size: 10px; color: var(--muted); }
+  .ai { color: var(--ai); font-size: 10px; }
+  .mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 12px; color: var(--muted); }
+  /* drawer */
+  .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: none; z-index: 10; }
+  .overlay.show { display: block; }
+  .drawer { position: fixed; top: 0; right: 0; height: 100%; width: 460px; max-width: 92vw;
+    background: var(--panel); border-left: 1px solid var(--border); padding: 22px; overflow-y: auto;
+    transform: translateX(100%); transition: transform .2s; z-index: 11; }
+  .drawer.show { transform: translateX(0); }
+  .drawer h2 { font-size: 15px; margin: 0 0 4px; }
+  .drawer .desc { color: var(--muted); margin: 10px 0; font-size: 13px; }
+  .drawer .meta { font-size: 12px; color: var(--muted); margin-bottom: 12px; }
+  .timeline { margin-top: 16px; border-left: 2px solid var(--border); padding-left: 14px; }
+  .timeline .ev { margin-bottom: 12px; position: relative; }
+  .timeline .ev:before { content: ""; position: absolute; left: -19px; top: 5px; width: 8px; height: 8px;
+    border-radius: 50%; background: var(--accent); }
+  .timeline .ev .et { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .3px; }
+  .timeline .ev .em { font-size: 12px; color: var(--muted); }
+  .timeline .ev .ed { font-size: 11px; color: var(--info); }
+  select.status-pick { padding: 4px 6px; }
+  .empty { color: var(--muted); padding: 30px; text-align: center; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1><span class="dot">●</span> ClueScan · AI Code Review Center</h1>
+  <div class="spacer"></div>
+  <input class="token" id="token" placeholder="API token (for writes)" />
+  <button onclick="refreshAll()" style="background:var(--accent);color:#0d1117;border:0;padding:7px 14px;border-radius:6px;font-weight:600;cursor:pointer">Refresh</button>
+</header>
+
+<main>
+  <div class="cards" id="cards"></div>
+  <div class="sev-grid" id="sevgrid"></div>
+
+  <div class="filters">
+    <select id="f-status" onchange="loadIssues()">
+      <option value="">all statuses</option>
+      <option>open</option><option>confirmed</option><option>fixing</option>
+      <option>fixed</option><option>wontfix</option><option>false_positive</option>
+    </select>
+    <select id="f-severity" onchange="loadIssues()">
+      <option value="">all severities</option>
+      <option>critical</option><option>high</option><option>medium</option><option>low</option><option>info</option>
+    </select>
+    <select id="f-project" onchange="loadIssues()"><option value="">all projects</option></select>
+    <input class="q" id="f-tool" placeholder="source tool (e.g. cursor)" oninput="loadIssues()" />
+  </div>
+
+  <table>
+    <thead><tr>
+      <th>Severity</th><th>Issue</th><th>Location</th><th>Project</th>
+      <th>Sources</th><th>Status</th>
+    </tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <div id="empty" class="empty" style="display:none">No issues yet — run a review from an AI agent.</div>
+</main>
+
+<div class="overlay" id="overlay" onclick="closeDrawer()"></div>
+<div class="drawer" id="drawer">
+  <div id="drawer-content"></div>
+</div>
+
+<script>
+const tokenKey = "cluescan_token";
+document.getElementById("token").value = localStorage.getItem(tokenKey) || "";
+document.getElementById("token").addEventListener("change", e => localStorage.setItem(tokenKey, e.target.value));
+function authHeaders(){ const t = document.getElementById("token").value.trim(); return t ? {"Authorization":"Bearer "+t} : {}; }
+
+async function api(path, opts={}){ const r = await fetch(path, {headers:{"Content-Type":"application/json", ...authHeaders()}, ...opts});
+  if(!r.ok){ throw new Error(await r.text()); } return r.json(); }
+
+function sevClass(s){ return "sev-"+(s||"info"); }
+
+async function refreshAll(){ await Promise.all([loadDashboard(), loadProjects(), loadIssues()]); }
+
+async function loadDashboard(){
+  const d = await api("/api/v1/stats/dashboard");
+  document.getElementById("cards").innerHTML = [
+    card("Open", (d.by_status?.open||0)),
+    card("Total issues", d.total||0),
+    card("AI auto-closed", `<span style="color:var(--ai)">${d.ai_closed||0}</span>`),
+    card("Projects", Object.keys(d.by_project||{}).length),
+  ].join("");
+  const order=["critical","high","medium","low","info"];
+  document.getElementById("sevgrid").innerHTML = order.map(s =>
+    `<div class="sev"><div class="n" style="color:var(--${ {critical:"crit",high:"high",medium:"med",low:"low",info:"info"}[s]})">${d.by_severity?.[s]||0}</div><div class="t">${s}</div></div>`
+  ).join("");
+}
+function card(label,value){ return `<div class="card"><div class="label">${label}</div><div class="value">${value}</div></div>`; }
+
+async function loadProjects(){
+  const ps = await api("/api/v1/projects");
+  const sel = document.getElementById("f-project");
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">all projects</option>' + ps.map(p=>`<option>${p.name}</option>`).join("");
+  sel.value = cur;
+}
+
+async function loadIssues(){
+  const p = new URLSearchParams();
+  const s=document.getElementById("f-status").value; if(s)p.set("status",s);
+  const sv=document.getElementById("f-severity").value; if(sv)p.set("severity",sv);
+  const pr=document.getElementById("f-project").value; if(pr)p.set("project",pr);
+  const t=document.getElementById("f-tool").value.trim(); if(t)p.set("source_tool",t);
+  const issues = await api("/api/v1/issues?"+p.toString());
+  const tb = document.getElementById("rows");
+  document.getElementById("empty").style.display = issues.length ? "none":"block";
+  tb.innerHTML = issues.map(i => `
+    <tr class="row" onclick="openIssue('${i.semantic_hash}')">
+      <td><span class="badge ${sevClass(i.severity)}">${(i.severity||"").toUpperCase()}</span></td>
+      <td><div>${escapeHtml(i.title)}</div><div class="mono">${escapeHtml(i.category||"")} ${i.cwe? "· "+escapeHtml(i.cwe):""}</div></td>
+      <td class="mono">${escapeHtml(i.file||"")}:${i.line||""} ${i.function? "· "+escapeHtml(i.function):""}</td>
+      <td>${escapeHtml(i.project||"")}</td>
+      <td><div class="tools">${(i.source_tools||[]).map(x=>`<span class="tool">${escapeHtml(x)}</span>`).join("")}</div></td>
+      <td><span class="st-${i.status}">${i.status}</span>${i.ai_closed?' <span class="ai">AI✓</span>':''}</td>
+    </tr>`).join("");
+}
+
+async function openIssue(sh){
+  const [i, evs] = await Promise.all([api("/api/v1/issues/"+sh), api("/api/v1/issues/"+sh+"/events")]);
+  const statuses=["open","confirmed","fixing","fixed","wontfix","false_positive"];
+  document.getElementById("drawer-content").innerHTML = `
+    <h2>${escapeHtml(i.title)}</h2>
+    <div class="meta">
+      <span class="badge ${sevClass(i.severity)}">${(i.severity||"").toUpperCase()}</span>
+      &nbsp;${escapeHtml(i.category||"")} ${i.cwe?"· "+escapeHtml(i.cwe):""} ${i.owasp?"· "+escapeHtml(i.owasp):""}
+      &nbsp;|&nbsp; <span class="st-${i.status}">${i.status}</span> ${i.ai_closed?'<span class="ai">AI auto-closed</span>':''}
+    </div>
+    <div class="desc">${escapeHtml(i.description||"")}</div>
+    <div class="meta mono">${escapeHtml(i.file||"")}:${i.line||""} ${i.function?"in "+escapeHtml(i.function):""}</div>
+    ${i.ai_close_reason?`<div class="desc"><b>AI close reason:</b> ${escapeHtml(i.ai_close_reason)}</div>`:""}
+    ${i.fix_suggestion?`<div class="desc"><b>Fix:</b> ${escapeHtml(i.fix_suggestion)}</div>`:"<div class='desc'><b>Fix:</b> "+(i.evidence&&i.evidence.data_flow? "flow: "+escapeHtml(i.evidence.data_flow):"n/a")+"</div>"}
+    <div style="margin-top:14px"><label style="color:var(--muted);font-size:12px">Set status:</label>
+      <select class="status-pick" onchange="setStatus('${sh}', this.value)">
+        ${statuses.map(x=>`<option ${x===i.status?"selected":""}>${x}</option>`).join("")}
+      </select>
+    </div>
+    <h3 style="font-size:13px;margin-top:22px">History</h3>
+    <div class="timeline">
+      ${evs.map(e=>`<div class="ev"><div class="et">${escapeHtml(e.event_type)}</div>
+        <div class="em">${escapeHtml(e.message||"")}</div>
+        <div class="ed">${escapeHtml(e.created_at||"")} ${e.source_tool?"· "+escapeHtml(e.source_tool):""}</div></div>`).join("")}
+    </div>`;
+  document.getElementById("overlay").classList.add("show");
+  document.getElementById("drawer").classList.add("show");
+}
+function closeDrawer(){ document.getElementById("overlay").classList.remove("show"); document.getElementById("drawer").classList.remove("show"); }
+
+async function setStatus(sh, status){
+  try{ await api("/api/v1/issues/"+sh+"/status", {method:"PATCH", body:JSON.stringify({status})});
+    await Promise.all([loadDashboard(), loadIssues()]); openIssue(sh);
+  }catch(e){ alert("Update failed: "+e.message); }
+}
+function escapeHtml(s){ return (s==null?"":String(s)).replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+
+refreshAll();
+</script>
+</body>
+</html>

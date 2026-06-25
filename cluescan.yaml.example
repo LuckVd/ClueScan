@@ -1,0 +1,58 @@
+# ClueScan configuration. Copy to cluescan.yaml and edit.
+# Values support ${ENV_VAR} and ${ENV_VAR:-default} interpolation.
+# Any value can also be overridden via env: CLUESCAN_<SECTION>_<KEY>
+# (e.g. CLUESCAN_LLM_API_KEY, CLUESCAN_LLM_MODEL).
+
+llm:
+  # OpenAI-compatible endpoint. Examples:
+  #   GLM/Zhipu : https://open.bigmodel.cn/api/paas/v4
+  #   OpenAI    : https://api.openai.com/v1
+  #   Ollama    : http://127.0.0.1:11434/v1
+  base_url: "https://open.bigmodel.cn/api/paas/v4"
+  api_key: "${CLUESCAN_LLM_API_KEY}"
+  model: "glm-4.6"
+  concurrency: 3
+  max_tokens: 16384
+  temperature: 0.1
+  timeout: 120
+  max_retries: 5
+
+triggers:
+  debounce_ms: 2500
+  sources: [skill]        # Phase 1: skill. Later: git_hooks, watcher
+
+analysis:
+  context_token_budget: 12000
+  explorer_max_steps: 12
+  enable_security: true
+  enable_logic_vuln: true
+  min_severity: low
+  languages: [python, javascript, java, go]
+
+dedup:
+  line_tolerance: 10
+  enable_llm_judge: false   # Phase 1: rule-based semantic hash only
+
+autoclose:
+  enabled: true
+  reverify_stale_days: 7
+
+storage:
+  local_db: "~/.cluescan/local.db"
+  center_db: "~/.cluescan/center.db"
+
+review_center:
+  host: "127.0.0.1"
+  port: 8787
+  auth_token: "${CLUESCAN_CENTER_TOKEN}"   # token clients use to POST /ingest
+
+sync:
+  endpoint: "http://127.0.0.1:8787"
+  auth_token: "${CLUESCAN_CENTER_TOKEN}"
+  retry_backoff: 5
+  max_retries: 0            # 0 = unbounded (keep retrying until center reachable)
+
+mcp:
+  transport: stdio          # stdio | streamable-http
+
+ignore_patterns: ["*.lock", "dist/", "node_modules/", "*.min.js", "vendor/"]
